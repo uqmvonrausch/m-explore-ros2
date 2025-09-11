@@ -400,9 +400,10 @@ void Explore::stop(bool finished_exploring)
   move_base_client_->async_cancel_all_goals();
   exploring_timer_->cancel();
 
-  if (return_to_init_ && finished_exploring) {
-    returnToInitialPose();
-  }
+  // if (return_to_init_ && finished_exploring) {
+  //   returnToInitialPose();
+  // }
+
 }
 
 void Explore::resume()
