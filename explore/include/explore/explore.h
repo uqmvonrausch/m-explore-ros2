@@ -51,6 +51,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <string>
 #include <vector>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -122,6 +123,12 @@ private:
 
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr resume_subscription_;
   void resumeCallback(const std_msgs::msg::Bool::SharedPtr msg);
+
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
+      explore_status_publisher;
+  rclcpp::TimerBase::SharedPtr status_timer;
+  void statusCallback(void);
+
 
   std::vector<geometry_msgs::msg::Point> frontier_blacklist_;
   geometry_msgs::msg::Point prev_goal_;

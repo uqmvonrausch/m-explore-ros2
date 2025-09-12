@@ -70,6 +70,7 @@ Explore::Explore()
   this->declare_parameter<float>("gain_scale", 1.0);
   this->declare_parameter<float>("min_frontier_size", 0.5);
   this->declare_parameter<bool>("return_to_init", false);
+  this->declare_parameter<std::string>("node_status", "idle");
 
   this->get_parameter("planner_frequency", planner_frequency_);
   this->get_parameter("progress_timeout", timeout);
@@ -97,6 +98,11 @@ Explore::Explore()
                                                                      "s",
                                                                      10);
   }
+
+  explore_status_publisher = this->create_publisher<std_msgs::msg::String>("explore/status", 10);
+  status_timer = this->create_wall_timer(
+      std::chrono::seconds(1),
+      [this]() { statusCallback(); });
 
   // Subscription to resume or stop exploration
   resume_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
@@ -128,6 +134,7 @@ Explore::Explore()
       std::chrono::milliseconds((uint16_t)(1000.0 / planner_frequency_)),
       [this]() { makePlan(); });
   // Start exploration right away
+  this->set_parameter(rclcpp::Parameter("node_status", "exploring"));
   makePlan();
 }
 
@@ -135,6 +142,16 @@ Explore::~Explore()
 {
   stop();
 }
+
+void Explore::statusCallback() 
+{
+  std::string status = this->get_parameter("node_status").as_string();
+
+  auto msg = std_msgs::msg::String();
+  msg.data = status;
+  explore_status_publisher->publish(msg);
+}
+
 
 void Explore::resumeCallback(const std_msgs::msg::Bool::SharedPtr msg)
 {
@@ -403,6 +420,14 @@ void Explore::stop(bool finished_exploring)
   // if (return_to_init_ && finished_exploring) {
   //   returnToInitialPose();
   // }
+
+  if (finished_exploring) {
+    this->set_parameter(rclcpp::Parameter("node_status", "finished"));
+  } else {
+    this->set_parameter(rclcpp::Parameter("node_status", "stopped"));
+  }
+
+  
 
 }
 
