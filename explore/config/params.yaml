@@ -11,4 +11,7 @@
     orientation_scale: 0.0
     gain_scale: 1.0
     transform_tolerance: 0.3
-    min_frontier_size: 0.75
+    min_frontier_size: 0.20
+    recovery_delta_x: 0.3
+    recovery_delta_y: 0.3
+    target_prox_lim: 0.2

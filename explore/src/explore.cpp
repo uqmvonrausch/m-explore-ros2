@@ -71,6 +71,9 @@ Explore::Explore()
   this->declare_parameter<float>("min_frontier_size", 0.5);
   this->declare_parameter<bool>("return_to_init", false);
   this->declare_parameter<std::string>("node_status", "idle");
+  this->declare_parameter<double>("recovery_delta_x", 0.5);
+  this->declare_parameter<double>("recovery_delta_y", 0.5);
+  this->declare_parameter<double>("target_prox_lim", 0.5);
 
   this->get_parameter("planner_frequency", planner_frequency_);
   this->get_parameter("progress_timeout", timeout);
@@ -81,6 +84,10 @@ Explore::Explore()
   this->get_parameter("min_frontier_size", min_frontier_size);
   this->get_parameter("return_to_init", return_to_init_);
   this->get_parameter("robot_base_frame", robot_base_frame_);
+  this->get_parameter("recovery_delta_x", recovery_delta_x_);
+  this->get_parameter("recovery_delta_y", recovery_delta_y_);
+  this->get_parameter("target_prox_lim", target_prox_lim_);
+
 
   progress_timeout_ = timeout;
   move_base_client_ =
@@ -103,6 +110,8 @@ Explore::Explore()
   status_timer = this->create_wall_timer(
       std::chrono::seconds(1),
       [this]() { statusCallback(); });
+  
+  goal_pose_publisher = this->create_publisher<geometry_msgs::msg::PoseStamped>("goal_pose", 10);
 
   // Subscription to resume or stop exploration
   resume_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
@@ -259,6 +268,9 @@ void Explore::makePlan()
   // find frontiers
   auto pose = costmap_client_.getRobotPose();
   
+  // get frontiers sorted according to cost
+  auto frontiers = search_.searchFrom(pose.position);
+  
   RCLCPP_DEBUG(logger_, "found %lu frontiers", frontiers.size());
   for (size_t i = 0; i < frontiers.size(); ++i) {
     RCLCPP_DEBUG(logger_, "frontier %zd cost: %f", i, frontiers[i].cost);
@@ -287,6 +299,17 @@ void Explore::makePlan()
     return;
   }
   geometry_msgs::msg::Point target_position = frontier->centroid;
+
+  // check whether proposed target is at the robot position
+  bool null_target =
+    (std::abs(target_position.x - initial_pose_.position.x) < target_prox_lim_) &&
+    (std::abs(target_position.y - initial_pose_.position.y) < target_prox_lim_);
+
+  if (null_target) {
+    RCLCPP_INFO(logger_, "Frontier target set to initial position: static delta added. ");
+    target_position.x += recovery_delta_x_;
+    target_position.y += recovery_delta_y_;
+  }
 
   // time out if we are not making any progress
   bool same_goal = same_point(prev_goal_, target_position);
@@ -337,6 +360,18 @@ void Explore::makePlan()
         reachedGoal(result, target_position);
       };
   move_base_client_->async_send_goal(goal, send_goal_options);
+
+  // geometry_msgs::msg::PoseStamped goal_msg;
+  // goal_msg.header.frame_id = costmap_client_.getGlobalFrameID();
+  // goal_msg.header.stamp = this->now();
+  // goal_msg.pose.position = target_position;
+  // goal_msg.pose.orientation.w = 1.0; 
+
+  // // Publish the goal
+  // goal_pose_publisher->publish(goal_msg);
+
+  // RCLCPP_INFO(logger_, "Published new goal to /goal_pose: [%.2f, %.2f, %.2f]",
+  //             target_position.x, target_position.y, target_position.z);
 }
 
 void Explore::returnToInitialPose()

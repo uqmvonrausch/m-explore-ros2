@@ -129,6 +129,8 @@ private:
   rclcpp::TimerBase::SharedPtr status_timer;
   void statusCallback(void);
 
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
+      goal_pose_publisher;
 
   std::vector<geometry_msgs::msg::Point> frontier_blacklist_;
   geometry_msgs::msg::Point prev_goal_;
@@ -147,6 +149,9 @@ private:
   bool return_to_init_;
   std::string robot_base_frame_;
   bool resuming_ = false;
+  double recovery_delta_x_;
+  double recovery_delta_y_;
+  double target_prox_lim_;
 };
 }  // namespace explore
 
