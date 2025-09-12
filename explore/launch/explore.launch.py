@@ -15,6 +15,8 @@ def generate_launch_description():
     )
     use_sim_time = LaunchConfiguration("use_sim_time")
     namespace = LaunchConfiguration("namespace")
+    log_level = LaunchConfiguration("log_level")
+
 
     declare_use_sim_time_argument = DeclareLaunchArgument(
         "use_sim_time", default_value="true", description="Use simulation/Gazebo clock"
@@ -23,6 +25,10 @@ def generate_launch_description():
         "namespace",
         default_value="",
         description="Namespace for the explore node",
+    )
+
+    declare_log_level_argument = DeclareLaunchArgument(
+        "log_level", default_value="INFO", description="Logging level (DEBUG, INFO, WARN, ERROR, FATAL)"
     )
 
     # Map fully qualified names to relative ones so the node's namespace can be prepended.
@@ -39,8 +45,10 @@ def generate_launch_description():
         parameters=[config, {"use_sim_time": use_sim_time}],
         output="screen",
         remappings=remappings,
+        arguments=["--ros-args", "--log-level", log_level],
     )
     ld.add_action(declare_use_sim_time_argument)
     ld.add_action(declare_namespace_argument)
+    ld.add_action(declare_log_level_argument)
     ld.add_action(node)
     return ld
