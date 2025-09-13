@@ -271,7 +271,7 @@ void Explore::makePlan()
   // get frontiers sorted according to cost
   auto frontiers = search_.searchFrom(pose.position);
   
-  RCLCPP_DEBUG(logger_, "found %lu frontiers", frontiers.size());
+  RCLCPP_INFO(logger_, "found %lu frontiers", frontiers.size());
   for (size_t i = 0; i < frontiers.size(); ++i) {
     RCLCPP_DEBUG(logger_, "frontier %zd cost: %f", i, frontiers[i].cost);
   }
@@ -299,6 +299,8 @@ void Explore::makePlan()
     return;
   }
   geometry_msgs::msg::Point target_position = frontier->centroid;
+
+  RCLCPP_INFO(logger_, "Testing initial pt with: {%.2f}, {%.2f}", target_prox_lim_, recovery_delta_x_);
 
   // check whether proposed target is at the robot position
   bool null_target =
@@ -347,6 +349,8 @@ void Explore::makePlan()
   goal.pose.pose.orientation.w = 1.;
   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
   goal.pose.header.stamp = this->now();
+
+  RCLCPP_INFO(logger_, "Sending frontier target: ({%.2f}, {%.2f})", target_position.x, target_position.y);
 
   auto send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
