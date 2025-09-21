@@ -46,7 +46,7 @@ inline static bool same_point(const geometry_msgs::msg::Point& one,
   double dx = one.x - two.x;
   double dy = one.y - two.y;
   double dist = sqrt(dx * dx + dy * dy);
-  return dist < 0.01;
+  return dist < 0.1;
 }
 
 namespace explore
@@ -341,16 +341,19 @@ void Explore::makePlan()
     return;
   }
 
-  RCLCPP_DEBUG(logger_, "Sending goal to move base nav2");
+  // RCLCPP_DEBUG(logger_, "Sending goal to move base nav2");
 
   // send goal to move_base if we have something new to pursue
   auto goal = nav2_msgs::action::NavigateToPose::Goal();
   goal.pose.pose.position = target_position;
   goal.pose.pose.orientation.w = 1.;
+  goal.pose.pose.orientation.x = 0.;
+  goal.pose.pose.orientation.y = 0.;
+  goal.pose.pose.orientation.z = 0.;
   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
   goal.pose.header.stamp = this->now();
 
-  RCLCPP_INFO(logger_, "Sending frontier target: ({%.2f}, {%.2f})", target_position.x, target_position.y);
+  // RCLCPP_INFO(logger_, "Sending frontier target: ({%.2f}, {%.2f})", target_position.x, target_position.y);
 
   auto send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
