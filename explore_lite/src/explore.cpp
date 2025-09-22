@@ -304,7 +304,7 @@ void Explore::makePlan()
     (std::abs(target_position.y - pose.position.y) < target_prox_lim_);
 
   if (null_target) {
-    RCLCPP_INFO(logger_, "Frontier target set to current robot position: estimating unexplored direction.");
+    RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction");
     
     // Get direction to frontier
     double dx = target_position.x - pose.position.x;
@@ -318,7 +318,7 @@ void Explore::makePlan()
     target_position.x = pose.position.x + dx * recovery_delta_;
     target_position.y = pose.position.y + dy * recovery_delta_;
 
-    RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction.");
+    // RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction.");
   }
 
   // time out if we are not making any progress
