@@ -71,8 +71,7 @@ Explore::Explore()
   this->declare_parameter<float>("min_frontier_size", 0.5);
   this->declare_parameter<bool>("return_to_init", false);
   this->declare_parameter<std::string>("node_status", "idle");
-  this->declare_parameter<double>("recovery_delta_x", 0.5);
-  this->declare_parameter<double>("recovery_delta_y", 0.5);
+  this->declare_parameter<double>("recovery_delta", 0.5);
   this->declare_parameter<double>("target_prox_lim", 0.5);
 
   this->get_parameter("planner_frequency", planner_frequency_);
@@ -84,8 +83,7 @@ Explore::Explore()
   this->get_parameter("min_frontier_size", min_frontier_size);
   this->get_parameter("return_to_init", return_to_init_);
   this->get_parameter("robot_base_frame", robot_base_frame_);
-  this->get_parameter("recovery_delta_x", recovery_delta_x_);
-  this->get_parameter("recovery_delta_y", recovery_delta_y_);
+  this->get_parameter("recovery_delta", recovery_delta_);
   this->get_parameter("target_prox_lim", target_prox_lim_);
 
 
@@ -300,17 +298,27 @@ void Explore::makePlan()
   }
   geometry_msgs::msg::Point target_position = frontier->centroid;
 
-  RCLCPP_INFO(logger_, "Testing initial pt with: {%.2f}, {%.2f}", target_prox_lim_, recovery_delta_x_);
-
   // check whether proposed target is at the robot position
   bool null_target =
-    (std::abs(target_position.x - initial_pose_.position.x) < target_prox_lim_) &&
-    (std::abs(target_position.y - initial_pose_.position.y) < target_prox_lim_);
+    (std::abs(target_position.x - pose.position.x) < target_prox_lim_) &&
+    (std::abs(target_position.y - pose.position.y) < target_prox_lim_);
 
   if (null_target) {
-    RCLCPP_INFO(logger_, "Frontier target set to initial position: static delta added. ");
-    target_position.x += recovery_delta_x_;
-    target_position.y += recovery_delta_y_;
+    RCLCPP_INFO(logger_, "Frontier target set to current robot position: estimating unexplored direction.");
+    
+    // Get direction to frontier
+    double dx = target_position.x - pose.position.x;
+    double dy = target_position.y - pose.position.y;
+    
+    // Normalise
+    double len = std::sqrt(dx*dx + dy*dy);
+    dx /= len; dy /= len;
+
+    // Project away from the robot
+    target_position.x = pose.position.x + dx * recovery_delta_;
+    target_position.y = pose.position.y + dy * recovery_delta_;
+
+    RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction.");
   }
 
   // time out if we are not making any progress
