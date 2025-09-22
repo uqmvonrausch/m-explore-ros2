@@ -334,7 +334,7 @@ void Explore::makePlan()
   if ((this->now() - last_progress_ >
       tf2::durationFromSec(progress_timeout_)) && !resuming_) {
     frontier_blacklist_.push_back(target_position);
-    RCLCPP_DEBUG(logger_, "Adding current goal to black list");
+    RCLCPP_INFO(logger_, "Adding current goal to black list");
     makePlan();
     return;
   }
@@ -361,7 +361,7 @@ void Explore::makePlan()
   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
   goal.pose.header.stamp = this->now();
 
-  // RCLCPP_INFO(logger_, "Sending frontier target: ({%.2f}, {%.2f})", target_position.x, target_position.y);
+  RCLCPP_INFO(logger_, "Sending frontier target: ({%.2f}, {%.2f})", target_position.x, target_position.y);
 
   auto send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
@@ -425,17 +425,32 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
 {
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
-      RCLCPP_DEBUG(logger_, "Goal was successful");
+      RCLCPP_INFO(logger_, "Goal was successful");
       break;
     case rclcpp_action::ResultCode::ABORTED:
-      RCLCPP_DEBUG(logger_, "Goal was aborted");
-      frontier_blacklist_.push_back(frontier_goal);
-      RCLCPP_DEBUG(logger_, "Adding current goal to black list");
+    {
+      RCLCPP_INFO(logger_, "Goal was aborted");
+
+      // Get the robot's current pose
+      auto current_pose = costmap_client_.getRobotPose();
+
+      // Compute distance to the frontier goal
+      double dx = frontier_goal.x - current_pose.position.x;
+      double dy = frontier_goal.y - current_pose.position.y;
+      double distance = std::sqrt(dx*dx + dy*dy);
+
+      RCLCPP_INFO(logger_, "Robot aborted %.2f meters away from goal", distance);
+      if (distance > 0.5) {
+        frontier_blacklist_.push_back(frontier_goal);
+        RCLCPP_INFO(logger_, "Adding current goal to black list");
+      }
+      
       // If it was aborted probably because we've found another frontier goal,
       // so just return and don't make plan again
       return;
+    }
     case rclcpp_action::ResultCode::CANCELED:
-      RCLCPP_DEBUG(logger_, "Goal was canceled");
+      RCLCPP_INFO(logger_, "Goal was canceled");
       // If goal canceled might be because exploration stopped from topic. Don't make new plan.
       return;
     default:

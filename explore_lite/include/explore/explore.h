@@ -149,8 +149,7 @@ private:
   bool return_to_init_;
   std::string robot_base_frame_;
   bool resuming_ = false;
-  double recovery_delta_x_;
-  double recovery_delta_y_;
+  double recovery_delta_;
   double target_prox_lim_;
 };
 }  // namespace explore
