@@ -191,9 +191,9 @@ bool FrontierSearch::isNewFrontierCell(unsigned int idx,
 
 double FrontierSearch::frontierCost(const Frontier& frontier)
 {
-  // return (potential_scale_ * frontier.min_distance *
-  //         costmap_->getResolution()) -
-  //        (gain_scale_ * frontier.size * costmap_->getResolution());
+  return (potential_scale_ * frontier.min_distance *
+          costmap_->getResolution()) -
+         (gain_scale_ * frontier.size * costmap_->getResolution());
 
   return (potential_scale_ * frontier.min_distance * costmap_->getResolution());
 }

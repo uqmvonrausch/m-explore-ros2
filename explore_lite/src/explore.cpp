@@ -366,10 +366,17 @@ void Explore::makePlan()
   // send goal to move_base if we have something new to pursue
   auto goal = nav2_msgs::action::NavigateToPose::Goal();
   goal.pose.pose.position = target_position;
-  goal.pose.pose.orientation.w = 1.;
-  goal.pose.pose.orientation.x = 0.;
-  goal.pose.pose.orientation.y = 0.;
-  goal.pose.pose.orientation.z = 0.;
+  
+  // Compute yaw angle between robot and target
+  double dx = target_position.x - pose.position.x;
+  double dy = target_position.y - pose.position.y;
+  double yaw = std::atan2(dy, dx);
+
+  // Convert yaw to quaternion
+  tf2::Quaternion q;
+  q.setRPY(0.0, 0.0, yaw);
+
+  goal.pose.pose.orientation = tf2::toMsg(q);
   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
   goal.pose.header.stamp = this->now();
 
@@ -437,6 +444,7 @@ bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
 void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
                           const geometry_msgs::msg::Point& frontier_goal)
 {
+  goal_active_ = false; 
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
       RCLCPP_INFO(logger_, "Goal was successful");
@@ -483,7 +491,6 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
   // Because of the 1-thread-executor nature of ros2 I think timer is not
   // needed.
 
-  goal_active_ = false; 
   makePlan();
 }
 

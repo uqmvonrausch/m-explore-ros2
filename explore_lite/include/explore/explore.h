@@ -56,6 +56,9 @@
 #include <vector>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include <geometry_msgs/msg/pose_array.hpp>
