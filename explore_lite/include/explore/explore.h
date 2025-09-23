@@ -58,6 +58,7 @@
 
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
+#include <geometry_msgs/msg/pose_array.hpp>
 
 using namespace std::placeholders;
 #ifdef ELOQUENT
@@ -124,6 +125,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr resume_subscription_;
   void resumeCallback(const std_msgs::msg::Bool::SharedPtr msg);
 
+  bool goal_active_;
+
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
       explore_status_publisher;
   rclcpp::TimerBase::SharedPtr status_timer;
@@ -140,6 +143,9 @@ private:
 
   geometry_msgs::msg::Pose initial_pose_;
   void returnToInitialPose(void);
+
+  rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr explore_blacklist_publisher;
+  void publishBlacklist();
 
   // parameters
   double planner_frequency_;

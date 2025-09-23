@@ -46,7 +46,7 @@ inline static bool same_point(const geometry_msgs::msg::Point& one,
   double dx = one.x - two.x;
   double dy = one.y - two.y;
   double dist = sqrt(dx * dx + dy * dy);
-  return dist < 0.1;
+  return dist < 0.3;
 }
 
 namespace explore
@@ -104,7 +104,13 @@ Explore::Explore()
                                                                      10);
   }
 
-  explore_status_publisher = this->create_publisher<std_msgs::msg::String>("explore/status", 10);
+  explore_status_publisher = 
+    this->create_publisher<std_msgs::msg::String>("explore/status", 10);
+
+  explore_blacklist_publisher =
+    this->create_publisher<geometry_msgs::msg::PoseArray>("explore/blacklist", 10);
+
+  
   status_timer = this->create_wall_timer(
       std::chrono::seconds(1),
       [this]() { statusCallback(); });
@@ -263,6 +269,12 @@ void Explore::visualizeFrontiers(
 
 void Explore::makePlan()
 {
+
+  if (goal_active_) {
+    // Robot is already pursuing a goal, don't send a new one
+    return;
+  }
+
   // find frontiers
   auto pose = costmap_client_.getRobotPose();
   
@@ -374,6 +386,8 @@ void Explore::makePlan()
        target_position](const NavigationGoalHandle::WrappedResult& result) {
         reachedGoal(result, target_position);
       };
+  
+  goal_active_ = true;
   move_base_client_->async_send_goal(goal, send_goal_options);
 
   // geometry_msgs::msg::PoseStamped goal_msg;
@@ -440,6 +454,7 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
       double distance = std::sqrt(dx*dx + dy*dy);
 
       RCLCPP_INFO(logger_, "Robot aborted %.2f meters away from goal", distance);
+      RCLCPP_INFO(logger_, "Robot aborted attempting to get to: {%.2f, %.2f}", frontier_goal.x, frontier_goal.y);
       if (distance > 0.5) {
         frontier_blacklist_.push_back(frontier_goal);
         RCLCPP_INFO(logger_, "Adding current goal to black list");
@@ -467,7 +482,26 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
 
   // Because of the 1-thread-executor nature of ros2 I think timer is not
   // needed.
+
+  goal_active_ = false; 
   makePlan();
+}
+
+void Explore::publishBlacklist()
+{
+  geometry_msgs::msg::PoseArray msg;
+  msg.header.stamp = this->now();
+  msg.header.frame_id = costmap_client_.getGlobalFrameID();
+
+  for (const auto &p : frontier_blacklist_) {
+    geometry_msgs::msg::Pose pose;
+    pose.position = p;
+    pose.orientation.w = 1.0;  // neutral orientation
+    msg.poses.push_back(pose);
+  }
+
+  explore_blacklist_publisher->publish(msg);
+  RCLCPP_INFO(logger_, "Published blacklist with %zu poses.", frontier_blacklist_.size());
 }
 
 void Explore::start()
@@ -487,6 +521,7 @@ void Explore::stop(bool finished_exploring)
 
   if (finished_exploring) {
     this->set_parameter(rclcpp::Parameter("node_status", "finished"));
+    publishBlacklist();
   } else {
     this->set_parameter(rclcpp::Parameter("node_status", "stopped"));
   }
