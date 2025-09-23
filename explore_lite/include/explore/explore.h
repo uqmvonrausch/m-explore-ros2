@@ -62,6 +62,7 @@
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include <geometry_msgs/msg/pose_array.hpp>
+#include "std_srvs/srv/empty.hpp"
 
 using namespace std::placeholders;
 #ifdef ELOQUENT
@@ -96,6 +97,10 @@ private:
    * @brief  Make a global plan
    */
   void makePlan();
+
+  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr make_plan_service_;
+  void makePlanCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> request,
+                      std::shared_ptr<std_srvs::srv::Empty::Response> response);
 
   // /**
   //  * @brief  Publish a frontiers as markers

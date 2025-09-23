@@ -95,6 +95,10 @@ Explore::Explore()
   search_ = frontier_exploration::FrontierSearch(costmap_client_.getCostmap(),
                                                  potential_scale_, gain_scale_,
                                                  min_frontier_size, logger_);
+                                          
+  make_plan_service_ = this->create_service<std_srvs::srv::Empty>(
+    "make_plan",
+    std::bind(&Explore::makePlanCallback, this, std::placeholders::_1, std::placeholders::_2));                                          
 
   if (visualize_) {
     marker_array_publisher_ =
@@ -164,6 +168,19 @@ void Explore::statusCallback()
   msg.data = status;
   explore_status_publisher->publish(msg);
 }
+
+void Explore::makePlanCallback(
+    const std::shared_ptr<std_srvs::srv::Empty::Request> /*request*/,
+    std::shared_ptr<std_srvs::srv::Empty::Response> /*response*/)
+{
+  statusCallback();
+  this->set_parameter(rclcpp::Parameter("node_status", "exploring"));
+  RCLCPP_INFO(this->get_logger(), "makePlan service called, triggering replanning.");
+  exploring_timer_->reset();
+  frontier_blacklist_.clear();
+  this->makePlan();
+}
+
 
 
 void Explore::resumeCallback(const std_msgs::msg::Bool::SharedPtr msg)
@@ -272,7 +289,6 @@ void Explore::makePlan()
 
   if (goal_active_) {
     // Robot is already pursuing a goal, don't send a new one
-    RCLCPP_INFO(logger_, "Planning pass: goal is active");
     return;
   }
 
@@ -449,7 +465,7 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
   goal_active_ = false; 
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
-      RCLCPP_INFO(logger_, "Goal was successful");
+      RCLCPP_DEBUG(logger_, "Goal was successful");
       break;
     case rclcpp_action::ResultCode::ABORTED:
     {
