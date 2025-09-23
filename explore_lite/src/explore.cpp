@@ -272,6 +272,7 @@ void Explore::makePlan()
 
   if (goal_active_) {
     // Robot is already pursuing a goal, don't send a new one
+    RCLCPP_INFO(logger_, "Planning pass: goal is active");
     return;
   }
 
@@ -358,6 +359,7 @@ void Explore::makePlan()
 
   // we don't need to do anything if we still pursuing the same goal
   if (same_goal) {
+    RCLCPP_INFO(logger_, "Planning pass: same goal");
     return;
   }
 
