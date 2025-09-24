@@ -12,5 +12,5 @@
     gain_scale: 0.2
     transform_tolerance: 0.3
     min_frontier_size: 0.35
-    recovery_delta: 0.7
-    target_prox_lim: 0.3
+    recovery_delta: 0.3
+    target_prox_lim: 0.2
