@@ -147,6 +147,7 @@ private:
   geometry_msgs::msg::Point prev_goal_;
   double prev_distance_;
   rclcpp::Time last_progress_;
+  rclcpp::Time last_goal_;
   size_t last_markers_count_;
 
   geometry_msgs::msg::Pose initial_pose_;
@@ -159,6 +160,7 @@ private:
   double planner_frequency_;
   double potential_scale_, orientation_scale_, gain_scale_;
   double progress_timeout_;
+  double goalpause_timeout_;
   bool visualize_;
   bool return_to_init_;
   std::string robot_base_frame_;
