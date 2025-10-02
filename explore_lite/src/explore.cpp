@@ -39,6 +39,7 @@
 #include <explore/explore.h>
 
 #include <thread>
+#include <chrono>
 
 inline static bool same_point(const geometry_msgs::msg::Point& one,
                               const geometry_msgs::msg::Point& two)
@@ -176,6 +177,7 @@ void Explore::makePlanCallback(
     std::shared_ptr<std_srvs::srv::Empty::Response> /*response*/)
 {
   statusCallback();
+  last_progress_ = this->now();
   this->set_parameter(rclcpp::Parameter("node_status", "exploring"));
   RCLCPP_INFO(this->get_logger(), "makePlan service called, triggering replanning.");
   exploring_timer_->reset();
@@ -342,6 +344,8 @@ void Explore::makePlan()
     (std::abs(target_position.y - pose.position.y) < target_prox_lim_);
 
   if (null_target) {
+    // RCLCPP_INFO(logger_, "Frontier target set to current robot position: Pausing for map update cycle (5s)");
+    // std::this_thread::sleep_for(std::chrono::seconds(5));
     RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction");
     
     // Get direction to frontier
@@ -375,7 +379,7 @@ void Explore::makePlan()
   if ((this->now() - last_progress_ >
       tf2::durationFromSec(progress_timeout_)) && !resuming_) {
     frontier_blacklist_.push_back(target_position);
-    RCLCPP_INFO(logger_, "Adding current goal to black list");
+    RCLCPP_INFO(logger_, "Timeout: Adding current goal to black list");
     makePlan();
     return;
   }
@@ -457,17 +461,17 @@ void Explore::returnToInitialPose()
 
 bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
 {
-  constexpr static size_t tolerace = 5;
-  nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
+  // constexpr static size_t tolerance = 2;
+  // nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
 
   // check if a goal is on the blacklist for goals that we're pursuing
   for (auto& frontier_goal : frontier_blacklist_) {
     double x_diff = fabs(goal.x - frontier_goal.x);
     double y_diff = fabs(goal.y - frontier_goal.y);
 
-    if (x_diff < tolerace * costmap2d->getResolution() &&
-        y_diff < tolerace * costmap2d->getResolution())
+    if (sqrt(x_diff * x_diff + y_diff * y_diff) < 0.35) {
       return true;
+    }
   }
   return false;
 }
@@ -478,7 +482,8 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
   goal_active_ = false; 
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
-      RCLCPP_DEBUG(logger_, "Goal was successful");
+      RCLCPP_DEBUG(logger_, "Goal was successful. Pausing for 2s");
+      std::this_thread::sleep_for(std::chrono::seconds(2));
       break;
     case rclcpp_action::ResultCode::ABORTED:
     {
