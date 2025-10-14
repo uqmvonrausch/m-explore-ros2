@@ -100,7 +100,7 @@ Explore::Explore()
                                                  min_frontier_size, logger_);
                                           
   make_plan_service_ = this->create_service<std_srvs::srv::Empty>(
-    "make_plan",
+    "/make_plan",
     std::bind(&Explore::makePlanCallback, this, std::placeholders::_1, std::placeholders::_2));                                          
 
   if (visualize_) {
