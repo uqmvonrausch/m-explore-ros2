@@ -134,6 +134,7 @@ private:
   void resumeCallback(const std_msgs::msg::Bool::SharedPtr msg);
 
   bool goal_active_;
+  bool first_pass_ = true;
 
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
       explore_status_publisher;
@@ -145,6 +146,7 @@ private:
 
   std::vector<geometry_msgs::msg::Point> frontier_blacklist_;
   geometry_msgs::msg::Point prev_goal_;
+  geometry_msgs::msg::Point prev_centroid_;
   double prev_distance_;
   rclcpp::Time last_progress_;
   rclcpp::Time last_goal_;

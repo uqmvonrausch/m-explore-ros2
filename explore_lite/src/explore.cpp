@@ -89,7 +89,6 @@ Explore::Explore()
   this->get_parameter("target_prox_lim", target_prox_lim_);
   this->get_parameter("goalpause_timeout", goalpause_timeout_);
 
-
   progress_timeout_ = timeout;
   move_base_client_ =
       rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
@@ -182,6 +181,7 @@ void Explore::makePlanCallback(
   RCLCPP_INFO(this->get_logger(), "makePlan service called, triggering replanning.");
   exploring_timer_->reset();
   frontier_blacklist_.clear();
+  first_pass_ = true;
   this->makePlan();
 }
 
@@ -360,17 +360,58 @@ void Explore::makePlan()
     target_position.x = pose.position.x + dx * recovery_delta_;
     target_position.y = pose.position.y + dy * recovery_delta_;
 
+    // Check the local costmap for the target position
+    unsigned int mx, my;
+    double delta_factor = 1.0;
+    while (true) {
+      // Convert the target position to map coordinates
+      if (!costmap_client_.getCostmap()->worldToMap(target_position.x, target_position.y, mx, my)) {
+        RCLCPP_WARN(logger_, "Target position is out of costmap bounds. Reducing recovery delta.");
+        delta_factor *= 0.5;  // Reduce recovery delta
+        if (delta_factor < 0.05) {  // Minimum threshold for recovery delta
+          RCLCPP_ERROR(logger_, "Recovery delta too small. Cannot find a valid target position.");
+          return;
+        }
+
+        // Recompute the target position closer to the robot
+        target_position.x = pose.position.x + dx * recovery_delta_ * delta_factor;
+        target_position.y = pose.position.y + dy * recovery_delta_ * delta_factor;
+        continue;
+      }
+
+      // Get the cost of the target position
+      unsigned char cost = costmap_client_.getCostmap()->getCost(mx, my);
+      if (cost >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
+        RCLCPP_WARN(logger_, "Target position is in an obstacle or too close. Reducing recovery delta.");
+        delta_factor *= 0.5;  // Reduce recovery delta
+        if (delta_factor < 0.05) {  // Minimum threshold for recovery delta
+          RCLCPP_ERROR(logger_, "Recovery delta too small. Cannot find a valid target position.");
+          return;
+        }
+
+        // Recompute the target position closer to the robot
+        target_position.x = pose.position.x + dx * recovery_delta_ * delta_factor;
+        target_position.y = pose.position.y + dy * recovery_delta_ * delta_factor;
+      } else {
+        // Valid target position found
+        break;
+      }
+    }
+
     // RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction.");
   }
 
   // Test for whether we are pursuing the same fontier
   // and whether we are pursuing the same goal
-  bool same_centroid = same_point(prev_goal_, target_centroid);
+
+
+  bool same_centroid = same_point(prev_centroid_, target_centroid);
   bool same_goal = same_point(prev_goal_, target_position);
-  prev_goal_ = target_centroid;
+  prev_goal_ = target_position;
+  prev_centroid_ = target_centroid;
 
   // If we have changed frontiers or we are making progress to a goal, reset
-  if (!same_centroid || (same_goal && prev_distance_ > frontier->min_distance)) {
+  if (first_pass_ ||!same_centroid || (same_goal && prev_distance_ > frontier->min_distance)) {
     // we have different goal or we made some progress
     last_progress_ = this->now();
     prev_distance_ = frontier->min_distance;
@@ -389,13 +430,50 @@ void Explore::makePlan()
     resuming_ = false;
   }
 
-  // we don't need to do anything if we still pursuing the same goal
-  // if (same_goal) {
-  //   RCLCPP_INFO(logger_, "Planning pass: same goal");
+  // unsigned int mx, my;
+  // if (!costmap_client_.getCostmap()->worldToMap(target_position.x, target_position.y, mx, my)) {
+  //   RCLCPP_WARN(logger_, "Target position is out of costmap bounds.");
   //   return;
   // }
 
-  // RCLCPP_DEBUG(logger_, "Sending goal to move base nav2");
+  // const auto* costmap = costmap_client_.getCostmap();
+  // double safe_distance = 0.2; // meters
+  // double resolution = costmap->getResolution();
+  // double min_obstacle_dist = std::numeric_limits<double>::max();
+  // int search_radius = static_cast<int>(safe_distance / resolution);
+
+  // for (int dx = -search_radius; dx <= search_radius; ++dx) {
+  //   for (int dy = -search_radius; dy <= search_radius; ++dy) {
+  //     int nx = mx + dx;
+  //     int ny = my + dy;
+  //     if (nx < 0 || ny < 0 || nx >= static_cast<int>(costmap->getSizeInCellsX()) || ny >= static_cast<int>(costmap->getSizeInCellsY()))
+  //       continue;
+  //     unsigned char cost = costmap->getCost(nx, ny);
+  //     if (cost >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
+  //       double dist = std::sqrt(dx*dx + dy*dy) * resolution;
+  //       if (dist < min_obstacle_dist && dist > 1e-6) {
+  //         min_obstacle_dist = dist;
+  //         // Compute direction away from obstacle
+  //         double away_x = target_position.x - (dx * resolution / dist) * (safe_distance - dist);
+  //         double away_y = target_position.y - (dy * resolution / dist) * (safe_distance - dist);
+  //         RCLCPP_INFO(logger_, "Moved target away from wall: ({%.2f}, {%.2f}) -> ({%.2f}, {%.2f})", 
+  //           target_position.x, target_position.y,
+  //           away_x, away_y
+  //         );
+  //         // Move target_position away from obstacle
+  //         target_position.x = away_x;
+  //         target_position.y = away_y;
+  //       }
+  //     }
+  //   }
+  // }
+
+  // // Re-check if the new target_position is valid
+  // if (!costmap_client_.getCostmap()->worldToMap(target_position.x, target_position.y, mx, my)) {
+  //   RCLCPP_WARN(logger_, "Adjusted target position is out of costmap bounds.");
+  //   return;
+  // }
+
 
   // send goal to move_base if we have something new to pursue
   auto goal = nav2_msgs::action::NavigateToPose::Goal();
@@ -431,7 +509,7 @@ void Explore::makePlan()
   
   goal_active_ = true;
   move_base_client_->async_send_goal(goal, send_goal_options);
-
+  first_pass_ = false;
   // geometry_msgs::msg::PoseStamped goal_msg;
   // goal_msg.header.frame_id = costmap_client_.getGlobalFrameID();
   // goal_msg.header.stamp = this->now();
