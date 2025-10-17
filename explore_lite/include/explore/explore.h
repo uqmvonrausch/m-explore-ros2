@@ -124,6 +124,14 @@ private:
   tf2_ros::TransformListener tf_listener_;
 
   Costmap2DClient costmap_client_;
+  nav_msgs::msg::OccupancyGrid::SharedPtr local_costmap_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr local_costmap_sub_;
+
+  nav_msgs::msg::OccupancyGrid::SharedPtr global_costmap_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr global_costmap_sub_;
+
+  int costmapVal(double wx, double wy, nav_msgs::msg::OccupancyGrid::SharedPtr costmap);
+
   rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr
       move_base_client_;
   frontier_exploration::FrontierSearch search_;

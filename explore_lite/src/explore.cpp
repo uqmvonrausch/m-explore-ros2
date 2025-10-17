@@ -93,6 +93,18 @@ Explore::Explore()
   move_base_client_ =
       rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
           this, ACTION_NAME);
+        
+  local_costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/local_costmap/costmap", 10,
+    [this](const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+        local_costmap_ = msg;
+    });
+
+  global_costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/global_costmap/costmap", 10,
+    [this](const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+        global_costmap_ = msg;
+    });
 
   search_ = frontier_exploration::FrontierSearch(costmap_client_.getCostmap(),
                                                  potential_scale_, gain_scale_,
@@ -184,8 +196,6 @@ void Explore::makePlanCallback(
   first_pass_ = true;
   this->makePlan();
 }
-
-
 
 void Explore::resumeCallback(const std_msgs::msg::Bool::SharedPtr msg)
 {
@@ -288,6 +298,23 @@ void Explore::visualizeFrontiers(
   marker_array_publisher_->publish(markers_msg);
 }
 
+int Explore::costmapVal(double wx, double wy, nav_msgs::msg::OccupancyGrid::SharedPtr costmap) {
+    if (!costmap) return -1;
+    double origin_x = costmap->info.origin.position.x;
+    double origin_y = costmap->info.origin.position.y;
+    double resolution = costmap->info.resolution;
+    int width = costmap->info.width;
+    int height = costmap->info.height;
+
+    int mx = static_cast<int>((wx - origin_x) / resolution);
+    int my = static_cast<int>((wy - origin_y) / resolution);
+
+    if (mx < 0 || my < 0 || mx >= width || my >= height) return -1;
+    int idx = my * width + mx;
+    int value = costmap->data[idx];
+    return value;
+}
+
 void Explore::makePlan()
 {
 
@@ -359,125 +386,83 @@ void Explore::makePlan()
     // Project away from the robot
     target_position.x = pose.position.x + dx * recovery_delta_;
     target_position.y = pose.position.y + dy * recovery_delta_;
+  }
 
-    // Check the local costmap for the target position
-    unsigned int mx, my;
-    double delta_factor = 1.0;
-    while (true) {
-      // Convert the target position to map coordinates
-      if (!costmap_client_.getCostmap()->worldToMap(target_position.x, target_position.y, mx, my)) {
-        RCLCPP_WARN(logger_, "Target position is out of costmap bounds. Reducing recovery delta.");
-        delta_factor *= 0.5;  // Reduce recovery delta
-        if (delta_factor < 0.05) {  // Minimum threshold for recovery delta
-          RCLCPP_ERROR(logger_, "Recovery delta too small. Cannot find a valid target position.");
-          return;
+  
+  // Get local and global costmap values for proposed position
+  int local_costmap_val = costmapVal(target_position.x, target_position.y, local_costmap_);
+  int global_costmap_val = costmapVal(target_position.x, target_position.y, global_costmap_);
+  RCLCPP_INFO(logger_, "Local costmap val at target is: %d.", local_costmap_val);
+  RCLCPP_INFO(logger_, "Global costmap val at target is: %d.", global_costmap_val);
+
+  int max_costmap_target_val = 80;
+  int max_costmap_val = std::max<int>(local_costmap_val, global_costmap_val);
+  
+  // If target position is too close to a wall, attempt to move it to a lower cost position
+  if (max_costmap_val >= max_costmap_target_val) {
+
+    // Search parameters
+    double search_radius = 8;
+    double search_resolution = 0.05;
+
+    bool found = false;
+    for (int dx = -search_radius; dx <= search_radius && !found; ++dx) {
+      for (int dy = -search_radius; dy <= search_radius && !found; ++dy) {
+
+        // Calculate candidate position and find max costmap value
+        double test_x = target_position.x + static_cast<double>(dx) * search_resolution;
+        double test_y = target_position.y + static_cast<double>(dy) * search_resolution;
+
+        int global_cost = costmapVal(test_x, test_y, global_costmap_);
+        int local_cost = costmapVal(test_x, test_y, local_costmap_);
+        int max_costmap_val = std::max<int>(local_cost, global_cost);
+
+        // Terminate search upon finding a valid target
+        if (max_costmap_val < max_costmap_target_val) {
+          RCLCPP_INFO(logger_, "Moved target from obstacle: (%.2f, %.2f) -> (%.2f, %.2f)", 
+            target_position.x, target_position.y, test_x, test_y);
+          target_position.x = test_x;
+          target_position.y = test_y;
+          found = true;
         }
-
-        // Recompute the target position closer to the robot
-        target_position.x = pose.position.x + dx * recovery_delta_ * delta_factor;
-        target_position.y = pose.position.y + dy * recovery_delta_ * delta_factor;
-        continue;
-      }
-
-      // Get the cost of the target position
-      unsigned char cost = costmap_client_.getCostmap()->getCost(mx, my);
-      if (cost >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
-        RCLCPP_WARN(logger_, "Target position is in an obstacle or too close. Reducing recovery delta.");
-        delta_factor *= 0.5;  // Reduce recovery delta
-        if (delta_factor < 0.05) {  // Minimum threshold for recovery delta
-          RCLCPP_ERROR(logger_, "Recovery delta too small. Cannot find a valid target position.");
-          return;
-        }
-
-        // Recompute the target position closer to the robot
-        target_position.x = pose.position.x + dx * recovery_delta_ * delta_factor;
-        target_position.y = pose.position.y + dy * recovery_delta_ * delta_factor;
-      } else {
-        // Valid target position found
-        break;
       }
     }
 
-    // RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction.");
+    // If never found a safe place to send robot, blacklist and return
+    if (found == false) {
+      RCLCPP_INFO(logger_, "Could not find low-cost neighbour. Blacklisting.");
+      frontier_blacklist_.push_back(target_centroid);
+      return;
+    }
   }
 
   // Test for whether we are pursuing the same fontier
   // and whether we are pursuing the same goal
-
-
   bool same_centroid = same_point(prev_centroid_, target_centroid);
   bool same_goal = same_point(prev_goal_, target_position);
   prev_goal_ = target_position;
   prev_centroid_ = target_centroid;
 
   // If we have changed frontiers or we are making progress to a goal, reset
-  if (first_pass_ ||!same_centroid || (same_goal && prev_distance_ > frontier->min_distance)) {
+  if (first_pass_ || !same_centroid || (same_goal && prev_distance_ > frontier->min_distance)) {
     // we have different goal or we made some progress
     last_progress_ = this->now();
     prev_distance_ = frontier->min_distance;
   }
+  
   // black list if we've made no progress for a long time
   if ((this->now() - last_progress_ >
       tf2::durationFromSec(progress_timeout_)) && !resuming_) {
-    frontier_blacklist_.push_back(target_position);
+    frontier_blacklist_.push_back(target_centroid);
     RCLCPP_INFO(logger_, "Timeout: Adding current goal to black list");
     makePlan();
     return;
   }
 
-  // ensure only first call of makePlan was set resuming to true
+  // Ensure only first call of makePlan was set resuming to true
   if (resuming_) {
     resuming_ = false;
   }
-
-  // unsigned int mx, my;
-  // if (!costmap_client_.getCostmap()->worldToMap(target_position.x, target_position.y, mx, my)) {
-  //   RCLCPP_WARN(logger_, "Target position is out of costmap bounds.");
-  //   return;
-  // }
-
-  // const auto* costmap = costmap_client_.getCostmap();
-  // double safe_distance = 0.2; // meters
-  // double resolution = costmap->getResolution();
-  // double min_obstacle_dist = std::numeric_limits<double>::max();
-  // int search_radius = static_cast<int>(safe_distance / resolution);
-
-  // for (int dx = -search_radius; dx <= search_radius; ++dx) {
-  //   for (int dy = -search_radius; dy <= search_radius; ++dy) {
-  //     int nx = mx + dx;
-  //     int ny = my + dy;
-  //     if (nx < 0 || ny < 0 || nx >= static_cast<int>(costmap->getSizeInCellsX()) || ny >= static_cast<int>(costmap->getSizeInCellsY()))
-  //       continue;
-  //     unsigned char cost = costmap->getCost(nx, ny);
-  //     if (cost >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
-  //       double dist = std::sqrt(dx*dx + dy*dy) * resolution;
-  //       if (dist < min_obstacle_dist && dist > 1e-6) {
-  //         min_obstacle_dist = dist;
-  //         // Compute direction away from obstacle
-  //         double away_x = target_position.x - (dx * resolution / dist) * (safe_distance - dist);
-  //         double away_y = target_position.y - (dy * resolution / dist) * (safe_distance - dist);
-  //         RCLCPP_INFO(logger_, "Moved target away from wall: ({%.2f}, {%.2f}) -> ({%.2f}, {%.2f})", 
-  //           target_position.x, target_position.y,
-  //           away_x, away_y
-  //         );
-  //         // Move target_position away from obstacle
-  //         target_position.x = away_x;
-  //         target_position.y = away_y;
-  //       }
-  //     }
-  //   }
-  // }
-
-  // // Re-check if the new target_position is valid
-  // if (!costmap_client_.getCostmap()->worldToMap(target_position.x, target_position.y, mx, my)) {
-  //   RCLCPP_WARN(logger_, "Adjusted target position is out of costmap bounds.");
-  //   return;
-  // }
-
-
-  // send goal to move_base if we have something new to pursue
-  auto goal = nav2_msgs::action::NavigateToPose::Goal();
-  goal.pose.pose.position = target_position;
   
   // Compute yaw angle between robot and target
   double dx = target_position.x - pose.position.x;
@@ -488,6 +473,9 @@ void Explore::makePlan()
   tf2::Quaternion q;
   q.setRPY(0.0, 0.0, yaw);
 
+  // Populate target goal if all checks have passed
+  auto goal = nav2_msgs::action::NavigateToPose::Goal();
+  goal.pose.pose.position = target_position;
   goal.pose.pose.orientation = tf2::toMsg(q);
   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
   goal.pose.header.stamp = this->now();
@@ -497,62 +485,49 @@ void Explore::makePlan()
   last_goal_ = this->now();
   auto send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
-  // send_goal_options.goal_response_callback =
-  // std::bind(&Explore::goal_response_callback, this, _1);
-  // send_goal_options.feedback_callback =
-  //   std::bind(&Explore::feedback_callback, this, _1, _2);
+
   send_goal_options.result_callback =
       [this,
        target_position](const NavigationGoalHandle::WrappedResult& result) {
         reachedGoal(result, target_position);
       };
   
+  // Set flags and send goal
   goal_active_ = true;
   move_base_client_->async_send_goal(goal, send_goal_options);
   first_pass_ = false;
-  // geometry_msgs::msg::PoseStamped goal_msg;
-  // goal_msg.header.frame_id = costmap_client_.getGlobalFrameID();
-  // goal_msg.header.stamp = this->now();
-  // goal_msg.pose.position = target_position;
-  // goal_msg.pose.orientation.w = 1.0; 
-
-  // // Publish the goal
-  // goal_pose_publisher->publish(goal_msg);
-
-  // RCLCPP_INFO(logger_, "Published new goal to /goal_pose: [%.2f, %.2f, %.2f]",
-  //             target_position.x, target_position.y, target_position.z);
 }
 
-void Explore::returnToInitialPose()
-{
-  RCLCPP_INFO(logger_, "Returning to initial pose.");
-  auto goal = nav2_msgs::action::NavigateToPose::Goal();
-  goal.pose.pose.position = initial_pose_.position;
-  goal.pose.pose.orientation = initial_pose_.orientation;
-  goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
-  goal.pose.header.stamp = this->now();
+// void Explore::returnToInitialPose()
+// {
+//   RCLCPP_INFO(logger_, "Returning to initial pose.");
+//   auto goal = nav2_msgs::action::NavigateToPose::Goal();
+//   goal.pose.pose.position = initial_pose_.position;
+//   goal.pose.pose.orientation = initial_pose_.orientation;
+//   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
+//   goal.pose.header.stamp = this->now();
 
-  auto send_goal_options =
-      rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
-  move_base_client_->async_send_goal(goal, send_goal_options);
-}
+//   auto send_goal_options =
+//       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
+//   move_base_client_->async_send_goal(goal, send_goal_options);
+// }
 
-bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
-{
-  // constexpr static size_t tolerance = 2;
-  // nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
+// bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
+// {
+//   // constexpr static size_t tolerance = 2;
+//   // nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
 
-  // check if a goal is on the blacklist for goals that we're pursuing
-  for (auto& frontier_goal : frontier_blacklist_) {
-    double x_diff = fabs(goal.x - frontier_goal.x);
-    double y_diff = fabs(goal.y - frontier_goal.y);
+//   // check if a goal is on the blacklist for goals that we're pursuing
+//   for (auto& frontier_goal : frontier_blacklist_) {
+//     double x_diff = fabs(goal.x - frontier_goal.x);
+//     double y_diff = fabs(goal.y - frontier_goal.y);
 
-    if (sqrt(x_diff * x_diff + y_diff * y_diff) < 0.35) {
-      return true;
-    }
-  }
-  return false;
-}
+//     if (sqrt(x_diff * x_diff + y_diff * y_diff) < 0.35) {
+//       return true;
+//     }
+//   }
+//   return false;
+// }
 
 void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
                           const geometry_msgs::msg::Point& frontier_goal)
@@ -636,19 +611,12 @@ void Explore::stop(bool finished_exploring)
   move_base_client_->async_cancel_all_goals();
   exploring_timer_->cancel();
 
-  // if (return_to_init_ && finished_exploring) {
-  //   returnToInitialPose();
-  // }
-
   if (finished_exploring) {
     this->set_parameter(rclcpp::Parameter("node_status", "finished"));
     publishBlacklist();
   } else {
     this->set_parameter(rclcpp::Parameter("node_status", "stopped"));
   }
-
-  
-
 }
 
 void Explore::resume()
@@ -666,12 +634,6 @@ void Explore::resume()
 int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
-  // ROS1 code
-  /*
-  if (ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME,
-                                     ros::console::levels::Debug)) {
-    ros::console::notifyLoggerLevelsChanged();
-  } */
   rclcpp::spin(
       std::make_shared<explore::Explore>());  // std::move(std::make_unique)?
   rclcpp::shutdown();
