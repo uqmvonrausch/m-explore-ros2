@@ -512,22 +512,22 @@ void Explore::makePlan()
 //   move_base_client_->async_send_goal(goal, send_goal_options);
 // }
 
-// bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
-// {
-//   // constexpr static size_t tolerance = 2;
-//   // nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
+bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
+{
+  // constexpr static size_t tolerance = 2;
+  // nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
 
-//   // check if a goal is on the blacklist for goals that we're pursuing
-//   for (auto& frontier_goal : frontier_blacklist_) {
-//     double x_diff = fabs(goal.x - frontier_goal.x);
-//     double y_diff = fabs(goal.y - frontier_goal.y);
+  // check if a goal is on the blacklist for goals that we're pursuing
+  for (auto& frontier_goal : frontier_blacklist_) {
+    double x_diff = fabs(goal.x - frontier_goal.x);
+    double y_diff = fabs(goal.y - frontier_goal.y);
 
-//     if (sqrt(x_diff * x_diff + y_diff * y_diff) < 0.35) {
-//       return true;
-//     }
-//   }
-//   return false;
-// }
+    if (sqrt(x_diff * x_diff + y_diff * y_diff) < 0.35) {
+      return true;
+    }
+  }
+  return false;
+}
 
 void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
                           const geometry_msgs::msg::Point& frontier_goal)
