@@ -317,6 +317,19 @@ int Explore::costmapVal(double wx, double wy, nav_msgs::msg::OccupancyGrid::Shar
 
 void Explore::makePlan()
 {
+  if (first_pass_) {
+    // we have different goal or we made some progress
+    last_progress_ = this->now();
+  }
+
+  // black list if we've made no progress for a long time
+  if ((this->now() - last_progress_ >
+      tf2::durationFromSec(progress_timeout_)) && !resuming_) {
+    frontier_blacklist_.push_back(prev_centroid_);
+    last_progress_ = this->now();
+    RCLCPP_INFO(logger_, "Timeout: Adding current goal to black list");
+    return;
+  }
 
   if (goal_active_) {
     // Robot is already pursuing a goal, don't send a new one
@@ -395,14 +408,14 @@ void Explore::makePlan()
   RCLCPP_INFO(logger_, "Local costmap val at target is: %d.", local_costmap_val);
   RCLCPP_INFO(logger_, "Global costmap val at target is: %d.", global_costmap_val);
 
-  int max_costmap_target_val = 80;
+  int max_costmap_target_val = 75;
   int max_costmap_val = std::max<int>(local_costmap_val, global_costmap_val);
   
   // If target position is too close to a wall, attempt to move it to a lower cost position
   if (max_costmap_val >= max_costmap_target_val) {
 
     // Search parameters
-    double search_radius = 8;
+    double search_radius = 6;
     double search_resolution = 0.05;
 
     bool found = false;
@@ -412,7 +425,13 @@ void Explore::makePlan()
         // Calculate candidate position and find max costmap value
         double test_x = target_position.x + static_cast<double>(dx) * search_resolution;
         double test_y = target_position.y + static_cast<double>(dy) * search_resolution;
-
+        
+        // Do not send trivial targets
+        if (std::abs(test_x - pose.position.x) < target_prox_lim_ &&
+            std::abs(test_y - pose.position.y) < target_prox_lim_) {
+              continue;
+            }
+        
         int global_cost = costmapVal(test_x, test_y, global_costmap_);
         int local_cost = costmapVal(test_x, test_y, local_costmap_);
         int max_costmap_val = std::max<int>(local_cost, global_cost);
@@ -448,15 +467,6 @@ void Explore::makePlan()
     // we have different goal or we made some progress
     last_progress_ = this->now();
     prev_distance_ = frontier->min_distance;
-  }
-  
-  // black list if we've made no progress for a long time
-  if ((this->now() - last_progress_ >
-      tf2::durationFromSec(progress_timeout_)) && !resuming_) {
-    frontier_blacklist_.push_back(target_centroid);
-    RCLCPP_INFO(logger_, "Timeout: Adding current goal to black list");
-    makePlan();
-    return;
   }
 
   // Ensure only first call of makePlan was set resuming to true
