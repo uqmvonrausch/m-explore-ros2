@@ -41,6 +41,10 @@
 #include <thread>
 #include <chrono>
 
+/// @brief Checks whether two points are within 20cm of eachother
+/// @param one The first point to check
+/// @param two The second point to check
+/// @return Boolean value - True if points are proximal
 inline static bool same_point(const geometry_msgs::msg::Point& one,
                               const geometry_msgs::msg::Point& two)
 {
@@ -52,6 +56,8 @@ inline static bool same_point(const geometry_msgs::msg::Point& one,
 
 namespace explore
 {
+
+/// @brief Constructor for the Explore class
 Explore::Explore()
   : Node("explore_node")
   , logger_(this->get_logger())
@@ -70,7 +76,6 @@ Explore::Explore()
   this->declare_parameter<float>("orientation_scale", 0.0);
   this->declare_parameter<float>("gain_scale", 1.0);
   this->declare_parameter<float>("min_frontier_size", 0.5);
-  this->declare_parameter<bool>("return_to_init", false);
   this->declare_parameter<std::string>("node_status", "idle");
   this->declare_parameter<double>("recovery_delta", 0.3);
   this->declare_parameter<double>("target_prox_lim", 0.2);
@@ -83,37 +88,42 @@ Explore::Explore()
   this->get_parameter("orientation_scale", orientation_scale_);
   this->get_parameter("gain_scale", gain_scale_);
   this->get_parameter("min_frontier_size", min_frontier_size);
-  this->get_parameter("return_to_init", return_to_init_);
   this->get_parameter("robot_base_frame", robot_base_frame_);
   this->get_parameter("recovery_delta", recovery_delta_);
   this->get_parameter("target_prox_lim", target_prox_lim_);
   this->get_parameter("goalpause_timeout", goalpause_timeout_);
-
   progress_timeout_ = timeout;
+
+  // Client accessing move base server for goal setting and feedback
   move_base_client_ =
       rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
           this, ACTION_NAME);
         
+  // Subscription to local costmap
   local_costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
     "/local_costmap/costmap", 10,
     [this](const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
         local_costmap_ = msg;
     });
 
+  // Subscription to global costmap
   global_costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
     "/global_costmap/costmap", 10,
     [this](const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
         global_costmap_ = msg;
     });
-
+  
+  // Frontier search object used to generate frontiers
   search_ = frontier_exploration::FrontierSearch(costmap_client_.getCostmap(),
                                                  potential_scale_, gain_scale_,
                                                  min_frontier_size, logger_);
                                           
+  // Service exposed to allow controlling nodes to restart frontier exploration  
   make_plan_service_ = this->create_service<std_srvs::srv::Empty>(
     "/make_plan",
     std::bind(&Explore::makePlanCallback, this, std::placeholders::_1, std::placeholders::_2));                                          
-
+  
+  // Frontier visualisation publisher
   if (visualize_) {
     marker_array_publisher_ =
         this->create_publisher<visualization_msgs::msg::MarkerArray>("explore/"
@@ -122,19 +132,19 @@ Explore::Explore()
                                                                      10);
   }
 
+  // Publisher for the status of the explore_lite node
   explore_status_publisher = 
     this->create_publisher<std_msgs::msg::String>("explore/status", 10);
 
+  // Publisher for the list of blacklisted goals (published on exit for post-processing)
   explore_blacklist_publisher =
     this->create_publisher<geometry_msgs::msg::PoseArray>("explore/blacklist", 10);
 
-  
+  // Timer for status publishing
   status_timer = this->create_wall_timer(
       std::chrono::seconds(1),
       [this]() { statusCallback(); });
   
-  goal_pose_publisher = this->create_publisher<geometry_msgs::msg::PoseStamped>("goal_pose", 10);
-
   // Subscription to resume or stop exploration
   resume_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
       "explore/resume", 10,
@@ -144,23 +154,7 @@ Explore::Explore()
   move_base_client_->wait_for_action_server();
   RCLCPP_INFO(logger_, "Connected to move_base nav2 server");
 
-  if (return_to_init_) {
-    RCLCPP_INFO(logger_, "Getting initial pose of the robot");
-    geometry_msgs::msg::TransformStamped transformStamped;
-    std::string map_frame = costmap_client_.getGlobalFrameID();
-    try {
-      transformStamped = tf_buffer_.lookupTransform(
-          map_frame, robot_base_frame_, tf2::TimePointZero);
-      initial_pose_.position.x = transformStamped.transform.translation.x;
-      initial_pose_.position.y = transformStamped.transform.translation.y;
-      initial_pose_.orientation = transformStamped.transform.rotation;
-    } catch (tf2::TransformException& ex) {
-      RCLCPP_ERROR(logger_, "Couldn't find transform from %s to %s: %s",
-                   map_frame.c_str(), robot_base_frame_.c_str(), ex.what());
-      return_to_init_ = false;
-    }
-  }
-
+  // Timer that triggers the planning loop 
   exploring_timer_ = this->create_wall_timer(
       std::chrono::milliseconds((uint16_t)(1000.0 / planner_frequency_)),
       [this]() { makePlan(); });
@@ -169,11 +163,13 @@ Explore::Explore()
   makePlan();
 }
 
+/// @brief Destructor for the Explore class
 Explore::~Explore()
 {
   stop();
 }
 
+/// @brief Callback function that publishes the status of the node
 void Explore::statusCallback() 
 {
   std::string status = this->get_parameter("node_status").as_string();
@@ -183,20 +179,30 @@ void Explore::statusCallback()
   explore_status_publisher->publish(msg);
 }
 
+/// @brief Callback function that re-initialises the search and re-starts the planning loop
+/// @param ROS2 Request type
+/// @param  ROS2 Response type
 void Explore::makePlanCallback(
     const std::shared_ptr<std_srvs::srv::Empty::Request> /*request*/,
     std::shared_ptr<std_srvs::srv::Empty::Response> /*response*/)
 {
+  // Immediately publish status back to the controlling node
   statusCallback();
+
+  // Reset critical values
   last_progress_ = this->now();
   this->set_parameter(rclcpp::Parameter("node_status", "exploring"));
   RCLCPP_INFO(this->get_logger(), "makePlan service called, triggering replanning.");
   exploring_timer_->reset();
   frontier_blacklist_.clear();
   first_pass_ = true;
+
+  // Re-start the planning loop
   this->makePlan();
 }
 
+/// @brief Callback to manage pause/resume feature
+/// @param msg Whether or not to resume search
 void Explore::resumeCallback(const std_msgs::msg::Bool::SharedPtr msg)
 {
   if (msg->data) {
@@ -206,6 +212,8 @@ void Explore::resumeCallback(const std_msgs::msg::Bool::SharedPtr msg)
   }
 }
 
+/// @brief Function to visualise frontiers to relevant ROS2 topics
+/// @param frontiers Vector of frontier vlasses to visualise
 void Explore::visualizeFrontiers(
     const std::vector<frontier_exploration::Frontier>& frontiers)
 {
@@ -258,20 +266,6 @@ void Explore::visualizeFrontiers(
   m.action = visualization_msgs::msg::Marker::ADD;
   size_t id = 0;
   for (auto& frontier : frontiers) {
-    m.type = visualization_msgs::msg::Marker::POINTS;
-    m.id = int(id);
-    // m.pose.position = {}; // compile warning
-    m.scale.x = 0.1;
-    m.scale.y = 0.1;
-    m.scale.z = 0.1;
-    m.points = frontier.points;
-    if (goalOnBlacklist(frontier.centroid)) {
-      m.color = red;
-    } else {
-      m.color = blue;
-    }
-    markers.push_back(m);
-    ++id;
     m.type = visualization_msgs::msg::Marker::SPHERE;
     m.id = int(id);
     m.pose.position = frontier.initial;
@@ -298,6 +292,11 @@ void Explore::visualizeFrontiers(
   marker_array_publisher_->publish(markers_msg);
 }
 
+/// @brief Get the value of a point in the world frame from a given costmap
+/// @param wx x-coord of test point
+/// @param wy y-coord of test point
+/// @param costmap occupancy grid to query
+/// @return value (0-255) representing the cost of the point
 int Explore::costmapVal(double wx, double wy, nav_msgs::msg::OccupancyGrid::SharedPtr costmap) {
     if (!costmap) return -1;
     double origin_x = costmap->info.origin.position.x;
@@ -315,10 +314,11 @@ int Explore::costmapVal(double wx, double wy, nav_msgs::msg::OccupancyGrid::Shar
     return value;
 }
 
+/// @brief Main planning loop of the node - selects next frontier and publishes 
 void Explore::makePlan()
 {
+  // Reset timer on first pass
   if (first_pass_) {
-    // we have different goal or we made some progress
     last_progress_ = this->now();
   }
 
@@ -375,7 +375,11 @@ void Explore::makePlan()
     stop(true);
     return;
   }
+
+  // Track the target position for the robot
   geometry_msgs::msg::Point target_position = frontier->centroid;
+
+  // Track the current frontier centroid being targeted 
   geometry_msgs::msg::Point target_centroid = target_position;
 
   // check whether proposed target is at the robot position
@@ -383,9 +387,8 @@ void Explore::makePlan()
     (std::abs(target_position.x - pose.position.x) < target_prox_lim_) &&
     (std::abs(target_position.y - pose.position.y) < target_prox_lim_);
 
+  // If target is ontop of the robot, project along the frontier direction
   if (null_target) {
-    // RCLCPP_INFO(logger_, "Frontier target set to current robot position: Pausing for map update cycle (5s)");
-    // std::this_thread::sleep_for(std::chrono::seconds(5));
     RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction");
     
     // Get direction to frontier
@@ -492,10 +495,12 @@ void Explore::makePlan()
 
   RCLCPP_INFO(logger_, "Sending frontier target: ({%.2f}, {%.2f})", target_position.x, target_position.y);
 
+  // Log goal 
   last_goal_ = this->now();
   auto send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
 
+  // Attach a callback for when goal is achieved
   send_goal_options.result_callback =
       [this,
        target_position](const NavigationGoalHandle::WrappedResult& result) {
@@ -508,24 +513,11 @@ void Explore::makePlan()
   first_pass_ = false;
 }
 
-// void Explore::returnToInitialPose()
-// {
-//   RCLCPP_INFO(logger_, "Returning to initial pose.");
-//   auto goal = nav2_msgs::action::NavigateToPose::Goal();
-//   goal.pose.pose.position = initial_pose_.position;
-//   goal.pose.pose.orientation = initial_pose_.orientation;
-//   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
-//   goal.pose.header.stamp = this->now();
-
-//   auto send_goal_options =
-//       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
-//   move_base_client_->async_send_goal(goal, send_goal_options);
-// }
-
+/// @brief Check whether a goal is blacklisted
+/// @param goal x-y coordinated of the goal
+/// @return boolean - whether the goal is blacklisted
 bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
 {
-  // constexpr static size_t tolerance = 2;
-  // nav2_costmap_2d::Costmap2D* costmap2d = costmap_client_.getCostmap();
 
   // check if a goal is on the blacklist for goals that we're pursuing
   for (auto& frontier_goal : frontier_blacklist_) {
@@ -538,16 +530,25 @@ bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
   }
   return false;
 }
-
+/// @brief Callback for when a goal is reached
+/// @param result result from move base server
+/// @param frontier_goal the goal attempted
 void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
                           const geometry_msgs::msg::Point& frontier_goal)
 {
+  // Enable a new goal to be sent
   goal_active_ = false; 
+
+  // Check result code
   switch (result.code) {
+
+    // No action on success - wait for next planning loop
     case rclcpp_action::ResultCode::SUCCEEDED:
       RCLCPP_DEBUG(logger_, "Goal was successful. Pausing for 2s");
       std::this_thread::sleep_for(std::chrono::seconds(2));
       break;
+
+    // If aborted, blacklist the attempted point
     case rclcpp_action::ResultCode::ABORTED:
     {
       RCLCPP_INFO(logger_, "Goal was aborted");
@@ -566,35 +567,26 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
         frontier_blacklist_.push_back(frontier_goal);
         RCLCPP_INFO(logger_, "Adding current goal to black list");
       }
-      
-      // If it was aborted probably because we've found another frontier goal,
-      // so just return and don't make plan again
+
       return;
     }
+
+    // If cancelled just wait for the next planning loop. 
     case rclcpp_action::ResultCode::CANCELED:
       RCLCPP_INFO(logger_, "Goal was canceled");
-      // If goal canceled might be because exploration stopped from topic. Don't make new plan.
       return;
     default:
       RCLCPP_WARN(logger_, "Unknown result code from move base nav2");
       break;
   }
-  // find new goal immediately regardless of planning frequency.
-  // execute via timer to prevent dead lock in move_base_client (this is
-  // callback for sendGoal, which is called in makePlan). the timer must live
-  // until callback is executed.
-  // oneshot_ = relative_nh_.createTimer(
-  //     ros::Duration(0, 0), [this](const ros::TimerEvent&) { makePlan(); },
-  //     true);
-
-  // Because of the 1-thread-executor nature of ros2 I think timer is not
-  // needed.
-
+  
   makePlan();
 }
 
+/// @brief Publishes the blacklisted goals 
 void Explore::publishBlacklist()
 {
+  // Construct array of poses
   geometry_msgs::msg::PoseArray msg;
   msg.header.stamp = this->now();
   msg.header.frame_id = costmap_client_.getGlobalFrameID();
@@ -606,21 +598,27 @@ void Explore::publishBlacklist()
     msg.poses.push_back(pose);
   }
 
+  // Publish to topic
   explore_blacklist_publisher->publish(msg);
   RCLCPP_INFO(logger_, "Published blacklist with %zu poses.", frontier_blacklist_.size());
 }
 
+/// @brief Placeholder function for start-up
 void Explore::start()
 {
   RCLCPP_INFO(logger_, "Exploration started.");
 }
 
+/// @brief Cleanup function for the planning loop terminating
+/// @param finished_exploring whether all available frontiers were explored
 void Explore::stop(bool finished_exploring)
 {
+  // Cancel goals and timer
   RCLCPP_INFO(logger_, "Exploration stopped.");
   move_base_client_->async_cancel_all_goals();
   exploring_timer_->cancel();
 
+  // Publish results based on whether all available frontiers were explored
   if (finished_exploring) {
     this->set_parameter(rclcpp::Parameter("node_status", "finished"));
     publishBlacklist();
@@ -629,6 +627,7 @@ void Explore::stop(bool finished_exploring)
   }
 }
 
+/// @brief Resets values when resuming
 void Explore::resume()
 {
   resuming_ = true;
