@@ -94,7 +94,10 @@ public:
 
 private:
   /**
-   * @brief  Make a global plan
+   * @brief  Make a global plan 
+   * Selects the next frontier point, tests it against the 
+   * robot's location and the local / global costmap, and 
+   * send the point to the action server
    */
   void makePlan();
 
@@ -102,18 +105,27 @@ private:
   void makePlanCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> request,
                       std::shared_ptr<std_srvs::srv::Empty::Response> response);
 
-  // /**
-  //  * @brief  Publish a frontiers as markers
-  //  */
+  /**
+   * @brief  Publish a frontiers as markers
+   */
   void visualizeFrontiers(
       const std::vector<frontier_exploration::Frontier>& frontiers);
 
+  /**
+   * @brief Check whether a given point matches the list of blaclisted points
+   * @param goal The point to check against the blacklist
+   * @return Whether the goal is close to any points in the blacklist
+   */
   bool goalOnBlacklist(const geometry_msgs::msg::Point& goal);
 
   NavigationGoalHandle::SharedPtr navigation_goal_handle_;
   // void
   // goal_response_callback(std::shared_future<NavigationGoalHandle::SharedPtr>
   // future);
+
+  /**
+   * @brief Handle the move_base result for a goal
+   */
   void reachedGoal(const NavigationGoalHandle::WrappedResult& result,
                    const geometry_msgs::msg::Point& frontier_goal);
 
@@ -130,6 +142,13 @@ private:
   nav_msgs::msg::OccupancyGrid::SharedPtr global_costmap_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr global_costmap_sub_;
 
+  /**
+   * @brief Tests the value of a point in the world frame against an occupancy grid
+   * @return The cost at that point, or -1 if error / unknown
+   * @param wx The x coordinate in the world frame of the test point
+   * @param wy The y coordinate in the world frame of the test point
+   * @param costmap Tne occupancy grid to test
+   */
   int costmapVal(double wx, double wy, nav_msgs::msg::OccupancyGrid::SharedPtr costmap);
 
   rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr
@@ -139,6 +158,11 @@ private:
   // rclcpp::TimerBase::SharedPtr oneshot_;
 
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr resume_subscription_;
+
+  /**
+   * @brief Callback that handles resume boolean message
+   * @param msg pointer to ROS2 message 
+   */
   void resumeCallback(const std_msgs::msg::Bool::SharedPtr msg);
 
   bool goal_active_;
@@ -147,6 +171,10 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
       explore_status_publisher;
   rclcpp::TimerBase::SharedPtr status_timer;
+
+  /**
+   * @brief publishes the status of the node
+   */
   void statusCallback(void);
 
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
@@ -161,9 +189,11 @@ private:
   size_t last_markers_count_;
 
   geometry_msgs::msg::Pose initial_pose_;
-  void returnToInitialPose(void);
 
   rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr explore_blacklist_publisher;
+  /**
+   * @brief Publishes the blacklisted points
+   */
   void publishBlacklist();
 
   // parameters

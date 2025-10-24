@@ -328,11 +328,7 @@ void Explore::makePlan()
     frontier_blacklist_.push_back(prev_centroid_);
     last_progress_ = this->now();
     RCLCPP_INFO(logger_, "Timeout: Adding current goal to black list");
-    return;
-  }
-
-  if (goal_active_) {
-    // Robot is already pursuing a goal, don't send a new one
+    move_base_client_->async_cancel_all_goals();
     return;
   }
 
@@ -348,10 +344,13 @@ void Explore::makePlan()
   // get frontiers sorted according to cost
   auto frontiers = search_.searchFrom(pose.position);
   
-  RCLCPP_INFO(logger_, "found %lu frontiers", frontiers.size());
-  for (size_t i = 0; i < frontiers.size(); ++i) {
-    RCLCPP_DEBUG(logger_, "frontier %zd cost: %f", i, frontiers[i].cost);
+  if (!goal_active_) {
+    RCLCPP_INFO(logger_, "found %lu frontiers", frontiers.size());
+    for (size_t i = 0; i < frontiers.size(); ++i) {
+      RCLCPP_DEBUG(logger_, "frontier %zd cost: %f", i, frontiers[i].cost);
+    }
   }
+  
 
   if (frontiers.empty()) {
     RCLCPP_WARN(logger_, "No frontiers found, stopping.");
@@ -389,7 +388,10 @@ void Explore::makePlan()
 
   // If target is ontop of the robot, project along the frontier direction
   if (null_target) {
-    RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction");
+    if (!goal_active_) {
+      RCLCPP_INFO(logger_, "Frontier target set to current robot position: projecting goal along frontier direction");
+    }
+    
     
     // Get direction to frontier
     double dx = target_position.x - pose.position.x;
@@ -408,8 +410,11 @@ void Explore::makePlan()
   // Get local and global costmap values for proposed position
   int local_costmap_val = costmapVal(target_position.x, target_position.y, local_costmap_);
   int global_costmap_val = costmapVal(target_position.x, target_position.y, global_costmap_);
-  RCLCPP_INFO(logger_, "Local costmap val at target is: %d.", local_costmap_val);
-  RCLCPP_INFO(logger_, "Global costmap val at target is: %d.", global_costmap_val);
+  if (!goal_active_) {
+    RCLCPP_INFO(logger_, "Local costmap val at target is: %d.", local_costmap_val);
+    RCLCPP_INFO(logger_, "Global costmap val at target is: %d.", global_costmap_val);  
+  }
+  
 
   int max_costmap_target_val = 75;
   int max_costmap_val = std::max<int>(local_costmap_val, global_costmap_val);
@@ -466,7 +471,7 @@ void Explore::makePlan()
   prev_centroid_ = target_centroid;
 
   // If we have changed frontiers or we are making progress to a goal, reset
-  if (first_pass_ || !same_centroid || (same_goal && prev_distance_ > frontier->min_distance)) {
+  if (first_pass_ || !same_centroid || (same_goal && (prev_distance_ > frontier->min_distance))) {
     // we have different goal or we made some progress
     last_progress_ = this->now();
     prev_distance_ = frontier->min_distance;
@@ -475,6 +480,11 @@ void Explore::makePlan()
   // Ensure only first call of makePlan was set resuming to true
   if (resuming_) {
     resuming_ = false;
+  }
+
+  if (goal_active_) {
+    // Robot is already pursuing a goal, don't send a new one
+    return;
   }
   
   // Compute yaw angle between robot and target
